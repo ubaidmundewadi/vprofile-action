@@ -6,7 +6,7 @@ env:
     EKS_CLUSTER: vprofile-eks
 
 jobs:
-    Testing:
+    TESTING:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout
@@ -49,7 +49,7 @@ jobs:
             #       SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
   
     BUILD_AND_PUBLISH:
-      needs: Testing
+      needs: TESTING
       runs-on: ubuntu-latest
       steps:
             - name: Checkout
@@ -67,3 +67,40 @@ jobs:
                 daemon_off: false
                 dockerfile: ./Dockerfile
                 context: ./
+    
+    Deploy_To_EKS:
+      needs: BUILD_AND_PUBLISH
+      runs-on: ubuntu-latest
+      steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Configure AWS credentials
+              uses: aws-actions/configure-aws-credentials@v1
+              with:
+                aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                aws-region: ${{ env.AWS_REGION }}
+
+            - name: EKS Update kubeconfig
+              run: aws eks --region ${{ env.AWS_REGION }} update-kubeconfig --name ${{ env.EKS_CLUSTER }}
+            
+            - name: Print config file
+              run: cat ~/.kube/config
+
+            - name: Login to ECR
+              run: kubectl create secret docker-registry regcred --docker-server=${{ secrets.REGISTRY }} --docker-username=AWS --docker-password=$(aws ecr get-login-password)
+
+            - name: Deploy to Helm
+              uses: bitovi/github-actions-deploy-eks-helm@v1.2.8
+              with:
+                aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                aws_region: ${{ env.AWS_REGION }}
+                cluster_name: ${{ env.EKS_CLUSTER }}
+                namespace: default
+                chart: ./helm/vprofilecharts
+                values: appimage=${{ secrets.REGISTRY }}/${{ env.ECR_REGISTRY }},apptag=${{github.run_number}}
+                name: vprofile-stack
+                
+      
